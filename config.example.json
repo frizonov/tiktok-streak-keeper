@@ -1,0 +1,16 @@
+{
+  "send_time": "12:00",
+  "headless": false,
+  "hide_window": true,
+  "browser_channel": "msedge",
+  "captcha_wait_sec": 300,
+  "smart_skip_if_sent_today": true,
+  "auto_send_active_streaks": false,
+  "active_streak_days_window": 3,
+  "delay_between_friends_sec": [4, 9],
+  "default_messages": ["🔥"],
+  "friends": [
+    { "username": "friend_one" },
+    { "username": "friend_two", "messages": ["🔥", "держим огонёк 🔥"] }
+  ]
+}

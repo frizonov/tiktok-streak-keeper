@@ -595,21 +595,32 @@ def inspect_conversations_metadata(page) -> list[dict]:
 
                 const msgs = [];
                 const seen = new Set();
-                function collect(obj, depth) {
-                    if (!obj || typeof obj !== 'object' || depth > 5 || seen.has(obj)) return;
+                function pushMsg(obj) {
+                    if (!obj || typeof obj !== 'object' || seen.has(obj)) return;
                     seen.add(obj);
-                    if (obj.createdAt && (obj.sender || obj.content)) {
-                        const ts = (obj.createdAt instanceof Date)
-                            ? obj.createdAt.getTime()
-                            : Date.parse(String(obj.createdAt));
-                        msgs.push({
-                            ts: Number.isFinite(ts) ? ts : 0,
-                            sender: String(obj.sender || ''),
-                            ext: obj.ext || obj.instance?.ext || {},
-                            template: obj.content?.template || null
-                        });
+                    const created = obj.createdAt || obj.instance?.createdAt;
+                    if (!created) return;
+                    const ts = (created instanceof Date)
+                        ? created.getTime()
+                        : Date.parse(String(created));
+                    let tpl = obj.content?.template || obj.instance?.content?.template || null;
+                    if (!tpl && typeof obj.contentRaw === 'string' && obj.contentRaw.includes('streak_badge')) {
+                        try { tpl = JSON.parse(obj.contentRaw)?.template || null; } catch (e) {}
+                    }
+                    msgs.push({
+                        ts: Number.isFinite(ts) ? ts : 0,
+                        sender: String(obj.sender || obj.instance?.sender || ''),
+                        ext: obj.ext || obj.instance?.ext || {},
+                        template: tpl
+                    });
+                }
+                function collect(obj, depth) {
+                    if (!obj || typeof obj !== 'object' || depth > 7 || seen.has(obj)) return;
+                    if (obj.createdAt && (obj.sender || obj.content || obj.contentRaw)) {
+                        pushMsg(obj);
                         return;
                     }
+                    seen.add(obj);
                     if (Array.isArray(obj)) {
                         for (const item of obj) collect(item, depth + 1);
                     } else {
@@ -618,6 +629,11 @@ def inspect_conversations_metadata(page) -> list[dict]:
                             collect(vv, depth + 1);
                         }
                     }
+                }
+                if (typeof conv.instance?.getMessageList === 'function') {
+                    try {
+                        for (const m of (conv.instance.getMessageList() || [])) pushMsg(m);
+                    } catch (e) {}
                 }
                 collect(conv.instance.segments, 0);
                 collect(conv.firstMessage, 0);
@@ -655,6 +671,7 @@ def inspect_conversations_metadata(page) -> list[dict]:
         has_streak_interaction = False
         streak_num: int | None = None
         streak_style: str | None = None
+        streak_msg_ts: int = -1
         latest_dt: datetime | None = None
 
         for m in item.get("msgs") or []:
@@ -664,36 +681,43 @@ def inspect_conversations_metadata(page) -> list[dict]:
             if any(k in (src + " " + light) for k in ("spark", "nudge", "streak")):
                 has_streak_interaction = True
 
+            ts_ms = m.get("ts") or 0
+            msg_dt: datetime | None = None
+            if ts_ms:
+                try:
+                    msg_dt = datetime.fromtimestamp(ts_ms / 1000.0)
+                except Exception:
+                    msg_dt = None
+
             for tpl in m.get("template") or []:
                 extra = (tpl or {}).get("extra") or {}
                 if "streak_badge_streak_num" in extra:
                     has_streak_interaction = True
                     try:
-                        streak_num = int(extra["streak_badge_streak_num"])
+                        raw_num = int(extra["streak_badge_streak_num"])
+                        if ts_ms >= streak_msg_ts:
+                            streak_msg_ts = ts_ms
+                            days_diff = max(0, (today_local - msg_dt.date()).days) if msg_dt else 0
+                            streak_num = raw_num + days_diff
+                            streak_style = extra.get("streak_badge_style")
                     except ValueError:
                         pass
-                    streak_style = extra.get("streak_badge_style")
 
-            ts_ms = m.get("ts") or 0
             sender = str(m.get("sender") or "")
-            if sender in ("", "1", "0") or not ts_ms:
+            if sender in ("", "1", "0") or not msg_dt:
                 continue
 
-            try:
-                dt = datetime.fromtimestamp(ts_ms / 1000.0)
-            except Exception:
-                continue
+            if latest_dt is None or msg_dt > latest_dt:
+                latest_dt = msg_dt
 
-            if latest_dt is None or dt > latest_dt:
-                latest_dt = dt
-
-            if dt.date() == today_local:
+            if msg_dt.date() == today_local:
                 if sender == peer_uid:
                     sent_by_peer_today = True
                 else:
                     sent_by_me_today = True
 
         last_msg_date = latest_dt.date().isoformat() if latest_dt else None
+        last_msg_ts = int(latest_dt.timestamp()) if latest_dt else 0
         days_since = (today_local - latest_dt.date()).days if latest_dt else 999
 
         results.append(
@@ -705,6 +729,7 @@ def inspect_conversations_metadata(page) -> list[dict]:
                 "sent_by_peer_today": sent_by_peer_today,
                 "both_active_today": sent_by_me_today and sent_by_peer_today,
                 "last_msg_date": last_msg_date,
+                "last_msg_ts": last_msg_ts,
                 "days_since_last_msg": days_since,
                 "has_streak_interaction": has_streak_interaction,
                 "streak_num": streak_num,
@@ -722,17 +747,31 @@ def inspect_conversations_metadata(page) -> list[dict]:
             if not u:
                 continue
             prev = chats_cache.get(u, {})
+            s_num = r["streak_num"]
+            s_num_date = prev.get("streak_num_date")
+            if s_num is None and prev.get("streak_num") is not None:
+                s_num = int(prev["streak_num"])
+                if r["both_active_today"] and s_num_date != today_iso:
+                    s_num += 1
+                    s_num_date = today_iso
+            elif s_num is not None:
+                s_num_date = today_iso
+            r["streak_num"] = s_num
+
             chats_cache[u] = {
                 "username": u,
+                "idx": r["idx"],
                 "nickname": r["nickname"] or prev.get("nickname", ""),
                 "sent_by_me_today": r["sent_by_me_today"],
                 "sent_by_peer_today": r["sent_by_peer_today"],
                 "both_active_today": r["both_active_today"],
                 "last_msg_date": r["last_msg_date"] or prev.get("last_msg_date"),
+                "last_msg_ts": max(int(r.get("last_msg_ts") or 0), int(prev.get("last_msg_ts") or 0)),
                 "days_since_last_msg": r["days_since_last_msg"],
                 "has_streak_interaction": r["has_streak_interaction"] or prev.get("has_streak_interaction", False),
-                "streak_num": r["streak_num"] if r["streak_num"] is not None else prev.get("streak_num"),
-                "streak_style": r["streak_style"] or prev.get("streak_style"),
+                "streak_num": s_num,
+                "streak_num_date": s_num_date or today_iso,
+                "streak_style": "color" if r["both_active_today"] else "grey",
                 "updated_date": today_iso,
                 "updated_at": now_str,
             }
@@ -1008,6 +1047,30 @@ def cmd_check(args) -> int:
     return 0
 
 
+def _warm_up_friend_chats(page, cfg: dict) -> None:
+    """Быстро прокликивает чаты друзей из списка, чтобы TikTok подгрузил их полную историю за сегодня."""
+    friends_set = {norm_username(f.get("username", "")) for f in cfg.get("friends", []) if f.get("username")}
+    try:
+        meta = inspect_conversations_metadata(page)
+        indices = [
+            m["idx"]
+            for m in meta
+            if (m.get("username") in friends_set) or (not friends_set and m["idx"] < 8)
+        ]
+        loc = page.locator('[data-e2e="dm-new-conversation-list"] [class*="--DivItemWrapper"]')
+        cnt = loc.count()
+        for idx in indices[:12]:
+            if idx < cnt:
+                try:
+                    loc.nth(idx).click(timeout=2000)
+                    page.wait_for_timeout(350)
+                except Exception:
+                    pass
+        page.wait_for_timeout(500)
+    except Exception:
+        pass
+
+
 def scan_streaks(cfg: dict | None = None) -> list[dict]:
     """Открывает /messages и возвращает список всех диалогов с метаданными огоньков и активности."""
     from playwright.sync_api import sync_playwright
@@ -1020,14 +1083,16 @@ def scan_streaks(cfg: dict | None = None) -> list[dict]:
         try:
             page = ctx.pages[0] if ctx.pages else ctx.new_page()
             ensure_logged_in(ctx, page, full_cfg["selectors"], full_cfg)
+            _warm_up_friend_chats(page, full_cfg)
             return inspect_conversations_metadata(page)
-        except CaptchaDetected:
+        except (CaptchaDetected, NeedLogin):
             if full_cfg.get("hide_window", True):
                 ctx.close()
-                log.info("В фоновом режиме появилась капча — открываю видимое окно для решения...")
+                log.info("В фоновом режиме появилась капча/вход — открываю видимое окно для решения...")
                 ctx = launch_browser(p, full_cfg, headless=False, hide_window=False)
                 page = ctx.pages[0] if ctx.pages else ctx.new_page()
                 ensure_logged_in(ctx, page, full_cfg["selectors"], full_cfg)
+                _warm_up_friend_chats(page, full_cfg)
                 return inspect_conversations_metadata(page)
             raise
         finally:

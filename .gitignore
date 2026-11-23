@@ -5,6 +5,7 @@ profile/
 logs/
 .streak.lock
 .daemon.pid
+.show_gui
 *.tmp
 
 # Python

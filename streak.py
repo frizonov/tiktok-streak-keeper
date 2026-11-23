@@ -214,10 +214,11 @@ def load_state() -> dict:
             with STATE_PATH.open("r", encoding="utf-8") as f:
                 state = json.load(f)
                 state.setdefault("last_sent", {})
+                state.setdefault("chats", {})
                 return state
         except (json.JSONDecodeError, OSError):
             log.warning("state.json повреждён — начинаю с чистой истории")
-    return {"last_sent": {}}
+    return {"last_sent": {}, "chats": {}}
 
 
 def save_state(state: dict) -> None:
@@ -711,6 +712,35 @@ def inspect_conversations_metadata(page) -> list[dict]:
             }
         )
 
+    # Сохраняем свежий срез метаданных чатов в state.json для иконки в трее и GUI
+    try:
+        st = load_state()
+        chats_cache = st.setdefault("chats", {})
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        for r in results:
+            u = r.get("username")
+            if not u:
+                continue
+            prev = chats_cache.get(u, {})
+            chats_cache[u] = {
+                "username": u,
+                "nickname": r["nickname"] or prev.get("nickname", ""),
+                "sent_by_me_today": r["sent_by_me_today"],
+                "sent_by_peer_today": r["sent_by_peer_today"],
+                "both_active_today": r["both_active_today"],
+                "last_msg_date": r["last_msg_date"] or prev.get("last_msg_date"),
+                "days_since_last_msg": r["days_since_last_msg"],
+                "has_streak_interaction": r["has_streak_interaction"] or prev.get("has_streak_interaction", False),
+                "streak_num": r["streak_num"] if r["streak_num"] is not None else prev.get("streak_num"),
+                "streak_style": r["streak_style"] or prev.get("streak_style"),
+                "updated_date": today_iso,
+                "updated_at": now_str,
+            }
+        st["last_scan_at"] = now_str
+        save_state(st)
+    except Exception as e:
+        log.debug("Не удалось обновить кэш чатов в state.json: %s", e)
+
     return results
 
 
@@ -1116,7 +1146,15 @@ def _run_session(p, cfg: dict, state: dict, today: str, friends: list[dict], arg
                     skip_if_already_sent=allow_skip_inside_chat,
                 )
                 if not args.dry_run:
+                    state = load_state()
                     state["last_sent"][username] = today
+                    c_entry = state.setdefault("chats", {}).setdefault(username, {"username": username})
+                    c_entry["sent_by_me_today"] = True
+                    c_entry["both_active_today"] = bool(c_entry.get("sent_by_peer_today"))
+                    c_entry["last_msg_date"] = today
+                    c_entry["updated_date"] = today
+                    c_entry["updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    state["last_run_at"] = c_entry["updated_at"]
                     save_state(state)
                     if sent_now:
                         log.info("✓ @%s: %s", username, text)
@@ -1224,8 +1262,9 @@ def is_pid_alive(pid: int) -> bool:
 
 def cmd_daemon(args) -> int:
     """
-    Тихий фоновый процесс (запускается через pythonw.exe без единого окна):
-    висит в фоне и раз в 5 минут проверяет, не пора ли отправить огоньки.
+    Тихий фоновый процесс с иконкой в системном трее Windows:
+    висит в трее, показывает статус огоньков при наведении и клике,
+    и раз в 5 минут проверяет, не пора ли отправить огоньки.
     """
     if DAEMON_PID_PATH.exists():
         try:
@@ -1235,6 +1274,13 @@ def cmd_daemon(args) -> int:
                 return 0
         except Exception:
             pass
+
+    if os.name == "nt" and not getattr(args, "no_tray", False):
+        try:
+            import gui
+            return gui.run_daemon_with_tray(sys.modules[__name__], open_window=getattr(args, "open_window", False))
+        except Exception as e:
+            log.warning("Не удалось запустить иконку в трее (%s), работаю в обычном фоновом режиме", e)
 
     DAEMON_PID_PATH.write_text(str(os.getpid()), encoding="utf-8")
     log.info("Фоновый демон TikTok Streak Keeper запущен (PID %d)", os.getpid())
@@ -1253,25 +1299,42 @@ def cmd_daemon(args) -> int:
         DAEMON_PID_PATH.unlink(missing_ok=True)
 
 
+def cmd_gui(args) -> int:
+    import gui
+    return gui.launch_gui_or_signal_tray(sys.modules[__name__])
+
+
+def cmd_menu(args) -> int:
+    import menu
+    try:
+        menu.run(sys.modules[__name__])
+    except (KeyboardInterrupt, EOFError):
+        pass
+    return 0
+
+
 def main() -> int:
-    # Без аргументов — интерактивное меню
+    # Без аргументов — открываем графический интерфейс (или консольное меню, если GUI недоступен)
     if len(sys.argv) == 1:
         setup_logging(verbose=False)
-        import menu
         try:
-            menu.run(sys.modules[__name__])
-        except (KeyboardInterrupt, EOFError):
-            pass
-        return 0
+            import gui
+            return gui.launch_gui_or_signal_tray(sys.modules[__name__])
+        except Exception:
+            return cmd_menu(argparse.Namespace())
 
     parser = argparse.ArgumentParser(prog="streak", description="Поддерживает огоньки в TikTok.")
     parser.add_argument("-v", "--verbose", action="store_true", help="подробный лог")
     sub = parser.add_subparsers(dest="command", required=True)
 
+    sub.add_parser("gui", help="открыть графическое окно управления (и иконку в трее)")
+    sub.add_parser("menu", help="открыть консольное меню в терминале")
     sub.add_parser("login", help="открыть браузер и войти в TikTok")
     sub.add_parser("check", help="проверить, что сессия жива")
     sub.add_parser("scan", help="найти активные чаты/огоньки и показать статус на сегодня")
-    sub.add_parser("daemon", help="тихий фоновый сервис (без окон)")
+    dm = sub.add_parser("daemon", help="фоновый сервис с иконкой в системном трее")
+    dm.add_argument("--no-tray", action="store_true", help="без иконки в трее")
+    dm.add_argument("--open-window", action="store_true", help="сразу показать главное окно")
     run = sub.add_parser("run", help="отправить сообщения (если пора и ещё не отправлено)")
     run.add_argument("--force", action="store_true", help="игнорировать время и историю отправок")
     run.add_argument("--dry-run", action="store_true", help="ввести сообщение, но не отправлять")
@@ -1281,6 +1344,8 @@ def main() -> int:
     setup_logging(args.verbose)
 
     commands = {
+        "gui": cmd_gui,
+        "menu": cmd_menu,
         "login": cmd_login,
         "check": cmd_check,
         "scan": cmd_scan,

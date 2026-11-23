@@ -12,4 +12,9 @@ if not exist ".venv\Scripts\python.exe" (
     )
 )
 
-".venv\Scripts\python.exe" streak.py
+if not exist ".venv\Lib\site-packages\customtkinter" (
+    echo Installing GUI dependencies...
+    ".venv\Scripts\python.exe" -m pip install -r requirements.txt
+)
+
+start "" ".venv\Scripts\pythonw.exe" streak.py gui

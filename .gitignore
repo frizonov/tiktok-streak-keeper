@@ -8,8 +8,12 @@ logs/
 .show_gui
 *.tmp
 
-# Python
+# Python & PyInstaller
 __pycache__/
 *.py[cod]
 .venv/
 venv/
+build/
+dist/
+*.spec
+*.exe

@@ -33,7 +33,11 @@ from datetime import time as dtime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
+ROOT = (
+    Path(sys.executable).resolve().parent
+    if getattr(sys, "frozen", False)
+    else Path(__file__).resolve().parent
+)
 CONFIG_PATH = ROOT / "config.json"
 STATE_PATH = ROOT / "state.json"
 PROFILE_DIR = ROOT / "profile"
@@ -1317,7 +1321,7 @@ def is_pid_alive(pid: int) -> bool:
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         out = (r.stdout or "").lower()
-        return "python" in out and f'"{pid}"' in out
+        return ("python" in out or "tiktokstreak" in out) and f'"{pid}"' in out
     try:
         os.kill(pid, 0)
         return True

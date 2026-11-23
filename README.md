@@ -4,6 +4,7 @@
 
 ## Что умеет
 
+- **Готовый `.exe` без установки Python** — достаточно скачать один файл и запустить двойным кликом (работает через встроенный в Windows Microsoft Edge).
 - **Минималистичный интерфейс и иконка в системном трее** — постоянно висит в трее возле часов:
   - при **наведении мыши** на иконку показывает сводку за сегодня (`6/6 отправлено`, `горят: 3/6`);
   - по **правому клику** открывает быстрое меню со статусом огонька каждого друга;
@@ -16,52 +17,45 @@
 
 ---
 
-## Быстрая установка через PowerShell
+## Быстрая установка
 
-Открой **PowerShell** (нажми `Win + R`, введи `powershell` и нажми `Enter`).
+### Способ 1: Скачать готовый `.exe` (проще всего, Python не нужен)
+1. Скачай **`TikTokStreakKeeper.exe`** со страницы **[Releases](https://github.com/frizonov/tiktok-streak-keeper/releases/latest)**.
+2. Положи его в отдельную папку (например, на Рабочем столе) и запусти двойным кликом.
 
-### 1. Установи Python (если ещё не установлен)
-Скопируй и вставь в PowerShell:
-
+*(Либо скачай и запусти одной командой в PowerShell):*
 ```powershell
-winget install -e --id Python.Python.3.12 --scope machine
-```
-*(После установки Python перезапусти окно PowerShell, чтобы обновился `PATH`).*
-
-### 2. Скачай и запусти TikTok Streak Keeper одной командой
-Эта команда сама скачает проект в папку `tiktok-streak-keeper` на Рабочем столе, установит нужные библиотеки и сразу откроет окно приложения:
-
-```powershell
-$dir = "$HOME\Desktop\tiktok-streak-keeper"; Invoke-WebRequest "https://github.com/frizonov/tiktok-streak-keeper/archive/refs/heads/main.zip" -OutFile "$env:TEMP\tsk.zip"; Expand-Archive "$env:TEMP\tsk.zip" -DestinationPath "$env:TEMP\tsk" -Force; New-Item -ItemType Directory -Path $dir -Force | Out-Null; Copy-Item "$env:TEMP\tsk\tiktok-streak-keeper-main\*" $dir -Recurse -Force; Set-Location $dir; .\start.bat
+$dir = "$HOME\Desktop\TikTokStreakKeeper"; New-Item -ItemType Directory -Path $dir -Force | Out-Null; Invoke-WebRequest "https://github.com/frizonov/tiktok-streak-keeper/releases/latest/download/TikTokStreakKeeper.exe" -OutFile "$dir\TikTokStreakKeeper.exe"; Start-Process "$dir\TikTokStreakKeeper.exe"
 ```
 
 <details>
-<summary>Альтернативный способ (через Git или архив вручную)</summary>
+<summary>Способ 2: Запуск из исходников (через Python / Git)</summary>
 
-**Через Git:**
-```powershell
-git clone https://github.com/frizonov/tiktok-streak-keeper.git
-cd tiktok-streak-keeper
-.\start.bat
-```
-
-**Вручную без команд:**
-1. Нажми зелёную кнопку **Code → Download ZIP** вверху этой страницы.
-2. Распакуй архив в любую папку.
-3. Запусти файл **`start.bat`**.
+1. Установи Python 3.10+:
+   ```powershell
+   winget install -e --id Python.Python.3.12 --scope machine
+   ```
+2. Скачай и запусти:
+   ```powershell
+   git clone https://github.com/frizonov/tiktok-streak-keeper.git
+   cd tiktok-streak-keeper
+   .\start.bat
+   ```
+3. При желании можешь сам пересобрать `.exe` командой:
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\build_exe.ps1
+   ```
 </details>
 
 ---
 
 ## Первая настройка
 
-1. Запусти **`start.bat`** — откроется окно **TikTok Streak** и появится иконка огонька в трее возле часов.
+1. Запусти **`TikTokStreakKeeper.exe`** — откроется окно **TikTok Streak** и появится иконка огонька в трее возле часов.
 2. Нажми внизу **`● Войти в TikTok`** — откроется браузер. Войди в свой аккаунт TikTok и закрой окно браузера (кнопка станет зелёной: `● Вход выполнен`).
 3. Нажми **`Найти в TikTok`** — программа просканирует твои чаты и предложит отметить друзей с огоньками (или добавь ники вручную через `+ @username`).
 4. Нажми **`Отправить`** (или включи переключатель **`Автозапуск`** и задай удобное время, например `12:00`).
 5. Закрой окно на крестик — приложение свернётся в системный трей и будет работать в фоне.
-
-*(Консольная версия меню и CLI-команды по-прежнему доступны через `.\.venv\Scripts\python.exe streak.py menu` / `scan` / `run`).*
 
 ---
 

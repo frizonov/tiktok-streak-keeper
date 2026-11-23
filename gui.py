@@ -16,6 +16,7 @@ import ctypes
 import json
 import os
 import subprocess
+import sys
 import threading
 import time
 from argparse import Namespace
@@ -929,9 +930,12 @@ class StreakTrayApp:
         if os.name != "nt":
             return
         if self.autostart_switch.get() == 1:
-            pyw = self.core.ROOT / ".venv" / "Scripts" / "pythonw.exe"
-            script = self.core.ROOT / "streak.py"
-            cmd = f'"{pyw}" "{script}" daemon'
+            if getattr(sys, "frozen", False):
+                cmd = f'"{sys.executable}" daemon'
+            else:
+                pyw = self.core.ROOT / ".venv" / "Scripts" / "pythonw.exe"
+                script = self.core.ROOT / "streak.py"
+                cmd = f'"{pyw}" "{script}" daemon'
             subprocess.run(
                 ["reg", "add", RUN_REG_KEY, "/v", TASK_NAME, "/t", "REG_SZ", "/d", cmd, "/f"],
                 capture_output=True,
